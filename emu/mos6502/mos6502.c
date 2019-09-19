@@ -41,6 +41,7 @@ typedef void (*widget_func_t)(mos6502_t *, enc_t *);
  *      -- nick
  */
 typedef struct {
+  uint8_t valid; // default to 0, I think, 1 is valid
   const char* name;
   enum addr_mode mode;
   widget_func_t evaluator;
@@ -98,8 +99,7 @@ mos6502_step_result_t mos6502_step(mos6502_t* cpu) {
   }
 
   // evaluate
-
-
+  widgets[opcode].evaluator(cpu, &enc);
   cpu->pc = newpc;
 
   mos6502_advance_clk(cpu, instr_cycles[opcode]);
@@ -170,7 +170,8 @@ defop(TYA) { NOT_IMPLEMENTED(TYA); }
 
 
 #define O(opname, opmode) \
-  { .name = #opname, .mode = MODE_##opmode, .evaluator = eval_##opname }
+  { .valid = 1, .name = #opname, .mode = MODE_##opmode, .evaluator = eval_##opname }
+
 // built from https://www.masswerk.at/6502/6502_instruction_set.html#RTI
 static const widget_t widgets[256] = {
     // first column: X0
