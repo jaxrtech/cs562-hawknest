@@ -21,9 +21,20 @@ static const uint8_t instr_cycles[256] = {
     2, 5, 2, 8, 4, 4, 6, 6, 2, 4, 2, 7, 4, 4, 7, 7,
 };
 
+
+
+
+typedef struct {
+  enum addr_mode mode;
+  uint8_t opcode;
+  union {
+    // ??
+  };
+} enc_t;
 // TODO: determine what a widget function is
 //      -- nick
-typedef void (*widget_func_t)(void);
+typedef void (*widget_func_t)(mos6502_t *, enc_t *);
+
 
 /**
  * An widget contains information about how to execute an instruction
@@ -32,6 +43,7 @@ typedef void (*widget_func_t)(void);
 typedef struct {
   const char* name;
   enum addr_mode mode;
+  widget_func_t evaluator;
 } widget_t;
 
 static const widget_t widgets[];
@@ -71,17 +83,94 @@ size_t mos6502_instr_repr(mos6502_t* cpu, uint16_t addr, char* buffer,
   return 0;
 }
 
+static int decode(mos6502_t* cpu, int pc, enc_t* enc, int* err) {
+  return pc;
+}
+
 mos6502_step_result_t mos6502_step(mos6502_t* cpu) {
   uint8_t opcode = read8(cpu, cpu->pc);
 
-  // FILL ME IN
+  enc_t enc;
+  int err = 0;
+  int newpc = decode(cpu, cpu->pc, &enc, &err);
+  if (err != 0) {
+    // die or something
+  }
+
+  // evaluate
+
+
+  cpu->pc = newpc;
 
   mos6502_advance_clk(cpu, instr_cycles[opcode]);
   return MOS6502_STEP_RESULT_SUCCESS;
 }
 
+
+#define NOT_IMPLEMENTED(name) {printf(#name " NOT IMPLEMENTED\n"); while(1);}
+#define defop(name) void eval_##name(mos6502_t *cpu, enc_t *enc)
+
+defop(ADC) { NOT_IMPLEMENTED(ADC); }
+defop(AND) { NOT_IMPLEMENTED(AND); }
+defop(ASL) { NOT_IMPLEMENTED(ASL); }
+defop(BCC) { NOT_IMPLEMENTED(BCC); }
+defop(BCS) { NOT_IMPLEMENTED(BCS); }
+defop(BEQ) { NOT_IMPLEMENTED(BEQ); }
+defop(BIT) { NOT_IMPLEMENTED(BIT); }
+defop(BMI) { NOT_IMPLEMENTED(BMI); }
+defop(BNE) { NOT_IMPLEMENTED(BNE); }
+defop(BPL) { NOT_IMPLEMENTED(BPL); }
+defop(BRK) { NOT_IMPLEMENTED(BRK); }
+defop(BVC) { NOT_IMPLEMENTED(BVC); }
+defop(BVS) { NOT_IMPLEMENTED(BVS); }
+defop(CLC) { NOT_IMPLEMENTED(CLC); }
+defop(CLD) { NOT_IMPLEMENTED(CLD); }
+defop(CLI) { NOT_IMPLEMENTED(CLI); }
+defop(CLV) { NOT_IMPLEMENTED(CLV); }
+defop(CMP) { NOT_IMPLEMENTED(CMP); }
+defop(CPX) { NOT_IMPLEMENTED(CPX); }
+defop(CPY) { NOT_IMPLEMENTED(CPY); }
+defop(DEC) { NOT_IMPLEMENTED(DEC); }
+defop(DEX) { NOT_IMPLEMENTED(DEX); }
+defop(DEY) { NOT_IMPLEMENTED(DEY); }
+defop(EOR) { NOT_IMPLEMENTED(EOR); }
+defop(INC) { NOT_IMPLEMENTED(INC); }
+defop(INX) { NOT_IMPLEMENTED(INX); }
+defop(INY) { NOT_IMPLEMENTED(INY); }
+defop(JMP) { NOT_IMPLEMENTED(JMP); }
+defop(JSR) { NOT_IMPLEMENTED(JSR); }
+defop(LDA) { NOT_IMPLEMENTED(LDA); }
+defop(LDX) { NOT_IMPLEMENTED(LDX); }
+defop(LDY) { NOT_IMPLEMENTED(LDY); }
+defop(LSR) { NOT_IMPLEMENTED(LSR); }
+defop(NOP) { NOT_IMPLEMENTED(NOP); }
+defop(ORA) { NOT_IMPLEMENTED(ORA); }
+defop(PHA) { NOT_IMPLEMENTED(PHA); }
+defop(PHP) { NOT_IMPLEMENTED(PHP); }
+defop(PLA) { NOT_IMPLEMENTED(PLA); }
+defop(PLP) { NOT_IMPLEMENTED(PLP); }
+defop(ROL) { NOT_IMPLEMENTED(ROL); }
+defop(ROR) { NOT_IMPLEMENTED(ROR); }
+defop(RTI) { NOT_IMPLEMENTED(RTI); }
+defop(RTS) { NOT_IMPLEMENTED(RTS); }
+defop(SBC) { NOT_IMPLEMENTED(SBC); }
+defop(SEC) { NOT_IMPLEMENTED(SEC); }
+defop(SED) { NOT_IMPLEMENTED(SED); }
+defop(SEI) { NOT_IMPLEMENTED(SEI); }
+defop(STA) { NOT_IMPLEMENTED(STA); }
+defop(STX) { NOT_IMPLEMENTED(STX); }
+defop(STY) { NOT_IMPLEMENTED(STY); }
+defop(TAX) { NOT_IMPLEMENTED(TAX); }
+defop(TAY) { NOT_IMPLEMENTED(TAY); }
+defop(TSX) { NOT_IMPLEMENTED(TSX); }
+defop(TXA) { NOT_IMPLEMENTED(TXA); }
+defop(TXS) { NOT_IMPLEMENTED(TXS); }
+defop(TYA) { NOT_IMPLEMENTED(TYA); }
+
+
+
 #define O(opname, opmode) \
-  { .name = #opname, .mode = MODE_##opmode }
+  { .name = #opname, .mode = MODE_##opmode, .evaluator = eval_##opname }
 // built from https://www.masswerk.at/6502/6502_instruction_set.html#RTI
 static const widget_t widgets[256] = {
     // first column: X0
@@ -132,7 +221,7 @@ static const widget_t widgets[256] = {
     [0xA4] = O(LDY, ZEROP),
     [0xB4] = O(LDY, ZEROPX),
     [0xC4] = O(CPY, ZEROP),
-    [0xE4] = O(EPY, ZEROP),
+    [0xE4] = O(CPX, ZEROP),
 
     // sixth column: X5
     [0x05] = O(ORA, ZEROP),
@@ -163,13 +252,12 @@ static const widget_t widgets[256] = {
     [0x76] = O(ROR, ZEROPX),
     [0x86] = O(STX, ZEROP),
     [0x96] = O(STX, ZEROPX),
-    [0xA6] = O(LDC, ZEROP),
-    [0xB6] = O(LDC, ZEROPX),
+    [0xA6] = O(LDX, ZEROP),
+    [0xB6] = O(LDX, ZEROPX),
     [0xC6] = O(DEC, ZEROP),
     [0xD6] = O(DEC, ZEROPX),
     [0xE6] = O(INC, ZEROP),
     [0xF6] = O(INC, ZEROPX),
-
 
     // Eighth column: X7
     // NONE
@@ -208,7 +296,6 @@ static const widget_t widgets[256] = {
     [0xD9] = O(CMP, ABSY),
     [0xE9] = O(SBC, IMM),
     [0xF9] = O(SBC, ABSY),
-
 
     // 11th column: XA
     [0x0A] = O(ASL, ACC),
