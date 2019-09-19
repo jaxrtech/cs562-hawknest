@@ -1,7 +1,7 @@
-EMU_SRC += mos6502/vmcall.c mos6502/mos6502-common.c
+EMU_SRC += mos6502/vmcall.c mos6502/mos6502-common.c mos6502/mos6502.c
 
 ifndef REFERENCE
-EMU_SRC += mos6502/mos6502-skeleton.c
+# EMU_SRC += mos6502/mos6502-skeleton.c
 else
-EMU_SRC += mos6502/mos6502.c
+# EMU_SRC += mos6502/mos6502.c
 endif
