@@ -40,8 +40,10 @@ typedef enum addr_mode {
 	MODE_IMM    = 5,     // Immediate
 	MODE_IMPL   = 6,    // Implied
 	MODE_IDXIND = 7,  // Indexed-indirect
+	MODE_XIND = 7,  // Indexed-indirect
 	MODE_IND    = 8,     // Indirect
 	MODE_INDIDX = 9,  // Indirect-indexed
+	MODE_INDY = 9,  // Indirect-indexed
 	MODE_REL    = 10,    // Relative
 	MODE_ZEROP  = 11,  // Zero-page
 	MODE_ZEROPX = 12, // Zero-page, indexed by X
