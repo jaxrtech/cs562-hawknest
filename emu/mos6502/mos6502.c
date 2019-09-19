@@ -21,27 +21,25 @@ static const uint8_t instr_cycles[256] = {
     2, 5, 2, 8, 4, 4, 6, 6, 2, 4, 2, 7, 4, 4, 7, 7,
 };
 
-
-
-
 typedef struct {
+  uint8_t valid;
   enum addr_mode mode;
   uint8_t opcode;
   union {
-    // ??
+   uint8_t arg8;
+   uint16_t arg16;
   };
 } enc_t;
 // TODO: determine what a widget function is
 //      -- nick
-typedef void (*widget_func_t)(mos6502_t *, enc_t *);
-
+typedef void (*widget_func_t)(mos6502_t*, enc_t*);
 
 /**
  * An widget contains information about how to execute an instruction
  *      -- nick
  */
 typedef struct {
-  uint8_t valid; // default to 0, I think, 1 is valid
+  uint8_t valid;  // default to 0, I think, 1 is valid
   const char* name;
   enum addr_mode mode;
   widget_func_t evaluator;
@@ -84,31 +82,89 @@ size_t mos6502_instr_repr(mos6502_t* cpu, uint16_t addr, char* buffer,
   return 0;
 }
 
-static int decode(mos6502_t* cpu, int pc, enc_t* enc, int* err) {
+static int decode(mos6502_t* cpu, int pc, enc_t* enc) {
+  enc->valid = 1;
+  enc->opcode = read8(cpu, cpu->pc);
+  widget_t* w = &widgets[enc->opcode];
+  if (w->valid != 1) {
+    enc->valid = 0;
+    return 0;
+  }
+
+  enc->mode = w->mode;
+  switch (w->mode) {
+    case MODE_NONE:
+      // No address calculation in decode
+      enc->valid = 0;
+      return pc;
+
+    case MODE_ABS:
+    case MODE_ABSX:
+    case MODE_ABSY:
+      enc->arg16 = read16(cpu, pc+1);
+      return pc+2;
+
+    case MODE_ACC:
+      // Accumulator
+      return pc + 1;
+
+    case MODE_IMM:
+      // Immediate
+      enc->arg8 = read8(cpu, pc + 1);
+      return pc + 2;
+
+    case MODE_IMPL:
+      // Implied
+      return pc + 1;
+
+    case MODE_XIND:
+      // Indexed-indirect
+      break;
+    case MODE_IND:
+      // Indirect
+      break;
+    case MODE_INDY:
+      // Indirect-indexed
+      break;
+    case MODE_REL:
+      // Relative
+      break;
+    case MODE_ZEROP:
+      // Zero-page
+      break;
+    case MODE_ZEROPX:
+      // Zero-page, indexed by X
+      break;
+    case MODE_ZEROPY:
+      // Zero-page, indexed by Y
+      break;
+  }
+
   return pc;
 }
 
 mos6502_step_result_t mos6502_step(mos6502_t* cpu) {
-  uint8_t opcode = read8(cpu, cpu->pc);
-
   enc_t enc;
-  int err = 0;
-  int newpc = decode(cpu, cpu->pc, &enc, &err);
-  if (err != 0) {
-    // die or something
+  int newpc = decode(cpu, cpu->pc, &enc);
+  if (enc.valid != 1) {
+    return MOS6502_STEP_RESULT_ILLEGAL_INSTRUCTION;
   }
 
   // evaluate
-  widgets[opcode].evaluator(cpu, &enc);
+  widgets[enc.opcode].evaluator(cpu, &enc);
   cpu->pc = newpc;
 
-  mos6502_advance_clk(cpu, instr_cycles[opcode]);
+  mos6502_advance_clk(cpu, instr_cycles[enc.opcode]);
   return MOS6502_STEP_RESULT_SUCCESS;
 }
 
-
-#define NOT_IMPLEMENTED(name) {printf(#name " NOT IMPLEMENTED\n"); while(1);}
-#define defop(name) void eval_##name(mos6502_t *cpu, enc_t *enc)
+#define NOT_IMPLEMENTED(name)           \
+  {                                     \
+    printf(#name " NOT IMPLEMENTED\n"); \
+    while (1)                           \
+      ;                                 \
+  }
+#define defop(name) void eval_##name(mos6502_t* cpu, enc_t* enc)
 
 defop(ADC) { NOT_IMPLEMENTED(ADC); }
 defop(AND) { NOT_IMPLEMENTED(AND); }
@@ -167,10 +223,11 @@ defop(TXA) { NOT_IMPLEMENTED(TXA); }
 defop(TXS) { NOT_IMPLEMENTED(TXS); }
 defop(TYA) { NOT_IMPLEMENTED(TYA); }
 
-
-
-#define O(opname, opmode) \
-  { .valid = 1, .name = #opname, .mode = MODE_##opmode, .evaluator = eval_##opname }
+#define O(opname, opmode)                               \
+  {                                                     \
+    .valid = 1, .name = #opname, .mode = MODE_##opmode, \
+    .evaluator = eval_##opname                          \
+  }
 
 // built from https://www.masswerk.at/6502/6502_instruction_set.html#RTI
 static const widget_t widgets[256] = {
