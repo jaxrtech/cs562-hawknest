@@ -74,15 +74,6 @@ static inline uint16_t buggy_read16(mos6502_t* cpu, uint16_t addr) {
   return val;
 }
 
-size_t mos6502_instr_repr(mos6502_t* cpu, uint16_t addr, char* buffer,
-                          size_t buflen) {
-  // FILL ME IN
-
-  // Delete this line when you're done
-  buffer[0] = 0;
-  return 0;
-}
-
 static int decode(mos6502_t* cpu, int pc, enc_t* enc) {
   enc->valid = 1;
   enc->opcode = read8(cpu, cpu->pc);
@@ -128,14 +119,14 @@ static int decode(mos6502_t* cpu, int pc, enc_t* enc) {
 
     case MODE_IND:
       // the address here is the one that is indirectly pointed to
-      enc->arg16 = read16(cpu, pc+1);
+      enc->arg16 = read16(cpu, pc + 1);
       enc->abs_addr = buggy_read16(cpu, enc->arg16);
       return pc + 3;
 
     case MODE_XIND:
-      // the supplied 8-bit address is offset by X reg to index a location in page 0x00
-      // the actual address is read from this location
-      enc->arg8 = read8(cpu, pc+1);
+      // the supplied 8-bit address is offset by X reg to index a location in
+      // page 0x00 the actual address is read from this location
+      enc->arg8 = read8(cpu, pc + 1);
       // read the actual address
       enc->abs_addr = read16(cpu, enc->arg8 + cpu->x);
       return pc + 2;
@@ -143,7 +134,7 @@ static int decode(mos6502_t* cpu, int pc, enc_t* enc) {
 
     case MODE_INDY:
       // Indirect-indexed
-      enc->arg8 = read8(cpu, pc+1);
+      enc->arg8 = read8(cpu, pc + 1);
       // read the actual address
       enc->abs_addr = read16(cpu, enc->arg8) + cpu->y;
       return pc + 2;
@@ -156,7 +147,7 @@ static int decode(mos6502_t* cpu, int pc, enc_t* enc) {
     case MODE_ZEROP:
       // Zero-page operations let you read a single byte from the first page.
       enc->arg8 = read8(cpu, pc + 1);
-      enc->abs_addr = enc->arg16; // some trickery
+      enc->abs_addr = enc->arg16;  // some trickery
       return pc + 2;
 
     case MODE_ZEROPX:
@@ -173,12 +164,82 @@ static int decode(mos6502_t* cpu, int pc, enc_t* enc) {
   return pc;
 }
 
+// TODO: THIS FUNCTION WILL READ FROM MEMORY, WHICH MEANS IT HAS SIDEEFFECTS
+//       like if it reads from a memory device or something...
+size_t mos6502_instr_repr(mos6502_t* cpu, uint16_t addr, char* buffer,
+                          size_t buflen) {
+  buffer[0] = 0;
+
+  enc_t e;
+  int newpc = decode(cpu, addr, &e);
+
+  if (!e.valid) return 0;
+
+  // no need to check validity, decode does that
+  const widget_t* w = &widgets[e.opcode];
+
+
+  switch (e.mode) {
+    case MODE_NONE:
+      return 0;
+
+    case MODE_ABS:
+      return snprintf(buffer, buflen, "%s  $%04x", w->name, e.arg16);
+
+    case MODE_ABSX:
+      return snprintf(buffer, buflen, "%s  $%04x,X", w->name, e.arg16);
+
+    case MODE_ABSY:
+      return snprintf(buffer, buflen, "%s  $%04x,Y", w->name, e.arg16);
+
+    case MODE_ACC:
+      return snprintf(buffer, buflen, "%s  A", w->name);
+
+    case MODE_IMM:
+      return snprintf(buffer, buflen, "%s  #$%02x", w->name, e.arg8);
+
+    case MODE_IMPL:
+      return snprintf(buffer, buflen, "%s", w->name);
+
+    case MODE_IND:
+      return snprintf(buffer, buflen, "%s  ($%04x)", w->name, e.arg16);
+      return 0;
+
+    case MODE_XIND:
+      return snprintf(buffer, buflen, "%s  ($%04x,X)", w->name, e.arg16);
+
+    case MODE_INDY:
+      return snprintf(buffer, buflen, "%s  ($%04x),Y", w->name, e.arg16);
+
+    case MODE_REL:
+      return snprintf(buffer, buflen, "%s  $%02x", w->name, e.arg8);
+
+    case MODE_ZEROP:
+      return snprintf(buffer, buflen, "%s  $%02x", w->name, e.arg8);
+
+    case MODE_ZEROPX:
+      return snprintf(buffer, buflen, "%s  $%02x,X", w->name, e.arg8);
+
+    case MODE_ZEROPY:
+      return snprintf(buffer, buflen, "%s  $%02x,X", w->name, e.arg8);
+  }
+
+  // Delete this line when you're done
+  return 0;
+}
+
 mos6502_step_result_t mos6502_step(mos6502_t* cpu) {
   enc_t enc;
   int newpc = decode(cpu, cpu->pc, &enc);
   if (enc.valid != 1) {
     return MOS6502_STEP_RESULT_ILLEGAL_INSTRUCTION;
   }
+
+
+  char buf[50];
+
+  mos6502_instr_repr(cpu, cpu->pc, buf, 50);
+  fprintf(stderr, "%s\n", buf);
 
   // evaluate
   widgets[enc.opcode].evaluator(cpu, &enc);
@@ -188,11 +249,11 @@ mos6502_step_result_t mos6502_step(mos6502_t* cpu) {
   return MOS6502_STEP_RESULT_SUCCESS;
 }
 
-#define NOT_IMPLEMENTED(name)           \
-  {                                     \
-    printf(#name " NOT IMPLEMENTED\n"); \
-    while (1)                           \
-      ;                                 \
+#define NOT_IMPLEMENTED(name)                    \
+  {                                              \
+    fprintf(stderr, #name " NOT IMPLEMENTED\n"); \
+    while (1)                                    \
+      ;                                          \
   }
 #define defop(name) void eval_##name(mos6502_t* cpu, enc_t* enc)
 
