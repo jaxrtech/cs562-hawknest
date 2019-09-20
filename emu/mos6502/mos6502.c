@@ -92,7 +92,7 @@ static int decode(mos6502_t* cpu, int pc, enc_t* enc) {
 
     case MODE_ABS:
       enc->abs_addr = enc->arg16 = read16(cpu, pc + 1);
-      return pc + 2;
+      return pc + 3;
 
     case MODE_ABSX:
       enc->arg16 = read16(cpu, pc + 1);
@@ -111,6 +111,7 @@ static int decode(mos6502_t* cpu, int pc, enc_t* enc) {
     case MODE_IMM:
       // Immediate
       enc->arg8 = read8(cpu, pc + 1);
+      enc->abs_addr = pc+1;
       return pc + 2;
 
     case MODE_IMPL:
@@ -147,17 +148,17 @@ static int decode(mos6502_t* cpu, int pc, enc_t* enc) {
     case MODE_ZEROP:
       // Zero-page operations let you read a single byte from the first page.
       enc->arg8 = read8(cpu, pc + 1);
-      enc->abs_addr = enc->arg16;  // some trickery
+      enc->abs_addr = enc->arg8 & 0xFF;  // some trickery
       return pc + 2;
 
     case MODE_ZEROPX:
       enc->arg8 = read8(cpu, pc + 1);
-      enc->abs_addr = enc->arg16 + cpu->x;
+      enc->abs_addr = (enc->arg8 & 0xFF) + cpu->x;  // some trickery
       return pc + 2;
 
     case MODE_ZEROPY:
       enc->arg8 = read8(cpu, pc + 1);
-      enc->abs_addr = enc->arg16 + cpu->y;
+      enc->abs_addr = (enc->arg8 & 0xFF) + cpu->y;  // some trickery
       return pc + 2;
   }
 
@@ -171,13 +172,12 @@ size_t mos6502_instr_repr(mos6502_t* cpu, uint16_t addr, char* buffer,
   buffer[0] = 0;
 
   enc_t e;
-  int newpc = decode(cpu, addr, &e);
+  decode(cpu, addr, &e);
 
   if (!e.valid) return 0;
 
   // no need to check validity, decode does that
   const widget_t* w = &widgets[e.opcode];
-
 
   switch (e.mode) {
     case MODE_NONE:
@@ -232,18 +232,19 @@ mos6502_step_result_t mos6502_step(mos6502_t* cpu) {
   enc_t enc;
   int newpc = decode(cpu, cpu->pc, &enc);
   if (enc.valid != 1) {
+    fprintf(stderr, "%04x: INVALID INSTRUCTION (opcode=%02x)\n", cpu->pc,
+            enc.opcode);
     return MOS6502_STEP_RESULT_ILLEGAL_INSTRUCTION;
   }
-
 
   char buf[50];
 
   mos6502_instr_repr(cpu, cpu->pc, buf, 50);
-  fprintf(stderr, "%s\n", buf);
+  fprintf(stderr, "%04x [%02x]: %s\n", cpu->pc, enc.opcode, buf);
 
   // evaluate
-  widgets[enc.opcode].evaluator(cpu, &enc);
   cpu->pc = newpc;
+  widgets[enc.opcode].evaluator(cpu, &enc);
 
   mos6502_advance_clk(cpu, instr_cycles[enc.opcode]);
   return MOS6502_STEP_RESULT_SUCCESS;
@@ -286,7 +287,13 @@ defop(INX) { NOT_IMPLEMENTED(INX); }
 defop(INY) { NOT_IMPLEMENTED(INY); }
 defop(JMP) { NOT_IMPLEMENTED(JMP); }
 defop(JSR) { NOT_IMPLEMENTED(JSR); }
-defop(LDA) { NOT_IMPLEMENTED(LDA); }
+
+defop(LDA) {
+  cpu->a = read8(cpu, enc->abs_addr);
+  cpu->p.z = cpu->a == 0x00;
+  cpu->p.n = cpu->a & 0x80;
+}
+
 defop(LDX) { NOT_IMPLEMENTED(LDX); }
 defop(LDY) { NOT_IMPLEMENTED(LDY); }
 defop(LSR) { NOT_IMPLEMENTED(LSR); }
@@ -304,7 +311,14 @@ defop(SBC) { NOT_IMPLEMENTED(SBC); }
 defop(SEC) { NOT_IMPLEMENTED(SEC); }
 defop(SED) { NOT_IMPLEMENTED(SED); }
 defop(SEI) { NOT_IMPLEMENTED(SEI); }
-defop(STA) { NOT_IMPLEMENTED(STA); }
+
+
+defop(STA) {
+  fprintf(stderr, "ADDR: %04x\n", enc->abs_addr);
+  write8(cpu, enc->abs_addr, cpu->a);
+}
+
+
 defop(STX) { NOT_IMPLEMENTED(STX); }
 defop(STY) { NOT_IMPLEMENTED(STY); }
 defop(TAX) { NOT_IMPLEMENTED(TAX); }
@@ -314,6 +328,11 @@ defop(TXA) { NOT_IMPLEMENTED(TXA); }
 defop(TXS) { NOT_IMPLEMENTED(TXS); }
 defop(TYA) { NOT_IMPLEMENTED(TYA); }
 
+defop(VMCALL) {
+  handle_vmcall(cpu, enc->arg8);
+  NOT_IMPLEMENTED(VMCALL);
+}
+
 #define O(opname, opmode)                               \
   {                                                     \
     .valid = 1, .name = #opname, .mode = MODE_##opmode, \
@@ -322,6 +341,9 @@ defop(TYA) { NOT_IMPLEMENTED(TYA); }
 
 // built from https://www.masswerk.at/6502/6502_instruction_set.html#RTI
 static const widget_t widgets[256] = {
+
+    // funky non-standard vmcall
+    [0x80] = O(VMCALL, IMM),
     // first column: X0
     [0x00] = O(BRK, IMPL),
     [0x10] = O(BPL, REL),
