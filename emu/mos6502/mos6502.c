@@ -97,12 +97,12 @@ static int decode(mos6502_t* cpu, int pc, enc_t* enc) {
     case MODE_ABSX:
       enc->arg16 = read16(cpu, pc + 1);
       enc->abs_addr = enc->arg16 + cpu->x;
-      return pc + 2;
+      return pc + 3;
 
     case MODE_ABSY:
       enc->arg16 = read16(cpu, pc + 1);
       enc->abs_addr = enc->arg16 + cpu->y;
-      return pc + 2;
+      return pc + 3;
 
     case MODE_ACC:
       // Accumulator
@@ -131,7 +131,6 @@ static int decode(mos6502_t* cpu, int pc, enc_t* enc) {
       // read the actual address
       enc->abs_addr = read16(cpu, enc->arg8 + cpu->x);
       return pc + 2;
-      break;
 
     case MODE_INDY:
       // Indirect-indexed
@@ -310,11 +309,19 @@ defop(JSR) { NOT_IMPLEMENTED(JSR); }
 defop(LDA) {
   cpu->a = read8(cpu, enc->abs_addr);
   cpu->p.z = cpu->a == 0x00;
-  cpu->p.n = cpu->a & 0x80;
+  cpu->p.n = cpu->a & 0x80 ? 1 : 0;
 }
 
-defop(LDX) { NOT_IMPLEMENTED(LDX); }
-defop(LDY) { NOT_IMPLEMENTED(LDY); }
+defop(LDX) {
+  cpu->x = read8(cpu, enc->abs_addr);
+  cpu->p.z = cpu->x == 0x00;
+  cpu->p.n = cpu->x & 0x80 ? 1 : 0;
+}
+defop(LDY) {
+  cpu->y = read8(cpu, enc->abs_addr);
+  cpu->p.z = cpu->y == 0x00;
+  cpu->p.n = cpu->y & 0x80 ? 1 : 0;
+}
 defop(LSR) { NOT_IMPLEMENTED(LSR); }
 defop(NOP) { NOT_IMPLEMENTED(NOP); }
 defop(ORA) { NOT_IMPLEMENTED(ORA); }
@@ -333,13 +340,16 @@ defop(SEI) { NOT_IMPLEMENTED(SEI); }
 
 
 defop(STA) {
-  fprintf(stderr, "ADDR: %04x\n", enc->abs_addr);
   write8(cpu, enc->abs_addr, cpu->a);
 }
 
+defop(STX) {
+  write8(cpu, enc->abs_addr, cpu->x);
+}
 
-defop(STX) { NOT_IMPLEMENTED(STX); }
-defop(STY) { NOT_IMPLEMENTED(STY); }
+defop(STY) {
+  write8(cpu, enc->abs_addr, cpu->y);
+}
 defop(TAX) { NOT_IMPLEMENTED(TAX); }
 defop(TAY) { NOT_IMPLEMENTED(TAY); }
 defop(TSX) { NOT_IMPLEMENTED(TSX); }
