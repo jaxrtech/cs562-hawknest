@@ -26,9 +26,10 @@ typedef struct {
   enum addr_mode mode;
   uint8_t opcode;
   union {
-   uint8_t arg8;
-   uint16_t arg16;
+    uint8_t arg8;
+    uint16_t arg16;
   };
+  uint16_t abs_addr;
 } enc_t;
 // TODO: determine what a widget function is
 //      -- nick
@@ -85,7 +86,7 @@ size_t mos6502_instr_repr(mos6502_t* cpu, uint16_t addr, char* buffer,
 static int decode(mos6502_t* cpu, int pc, enc_t* enc) {
   enc->valid = 1;
   enc->opcode = read8(cpu, cpu->pc);
-  widget_t* w = &widgets[enc->opcode];
+  const widget_t* w = &widgets[enc->opcode];
   if (w->valid != 1) {
     enc->valid = 0;
     return 0;
@@ -99,10 +100,18 @@ static int decode(mos6502_t* cpu, int pc, enc_t* enc) {
       return pc;
 
     case MODE_ABS:
+      enc->abs_addr = enc->arg16 = read16(cpu, pc + 1);
+      return pc + 2;
+
     case MODE_ABSX:
+      enc->arg16 = read16(cpu, pc + 1);
+      enc->abs_addr = enc->arg16 + cpu->x;
+      return pc + 2;
+
     case MODE_ABSY:
-      enc->arg16 = read16(cpu, pc+1);
-      return pc+2;
+      enc->arg16 = read16(cpu, pc + 1);
+      enc->abs_addr = enc->arg16 + cpu->y;
+      return pc + 2;
 
     case MODE_ACC:
       // Accumulator
@@ -117,27 +126,48 @@ static int decode(mos6502_t* cpu, int pc, enc_t* enc) {
       // Implied
       return pc + 1;
 
-    case MODE_XIND:
-      // Indexed-indirect
-      break;
     case MODE_IND:
-      // Indirect
+      // the address here is the one that is indirectly pointed to
+      enc->arg16 = read16(cpu, pc+1);
+      enc->abs_addr = buggy_read16(cpu, enc->arg16);
+      return pc + 3;
+
+    case MODE_XIND:
+      // the supplied 8-bit address is offset by X reg to index a location in page 0x00
+      // the actual address is read from this location
+      enc->arg8 = read8(cpu, pc+1);
+      // read the actual address
+      enc->abs_addr = read16(cpu, enc->arg8 + cpu->x);
+      return pc + 2;
       break;
+
     case MODE_INDY:
       // Indirect-indexed
-      break;
+      enc->arg8 = read8(cpu, pc+1);
+      // read the actual address
+      enc->abs_addr = read16(cpu, enc->arg8) + cpu->y;
+      return pc + 2;
+
     case MODE_REL:
       // Relative
-      break;
+      enc->arg8 = read8(cpu, pc + 1);
+      return pc + 2;
+
     case MODE_ZEROP:
-      // Zero-page
-      break;
+      // Zero-page operations let you read a single byte from the first page.
+      enc->arg8 = read8(cpu, pc + 1);
+      enc->abs_addr = enc->arg16; // some trickery
+      return pc + 2;
+
     case MODE_ZEROPX:
-      // Zero-page, indexed by X
-      break;
+      enc->arg8 = read8(cpu, pc + 1);
+      enc->abs_addr = enc->arg16 + cpu->x;
+      return pc + 2;
+
     case MODE_ZEROPY:
-      // Zero-page, indexed by Y
-      break;
+      enc->arg8 = read8(cpu, pc + 1);
+      enc->abs_addr = enc->arg16 + cpu->y;
+      return pc + 2;
   }
 
   return pc;
