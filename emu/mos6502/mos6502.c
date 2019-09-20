@@ -258,7 +258,26 @@ mos6502_step_result_t mos6502_step(mos6502_t* cpu) {
   }
 #define defop(name) void eval_##name(mos6502_t* cpu, enc_t* enc)
 
-defop(ADC) { NOT_IMPLEMENTED(ADC); }
+
+// add with carry (not that you can without)
+defop(ADC) {
+
+  uint8_t operand = read8(cpu, enc->abs_addr);
+
+  uint16_t t = (uint16_t)cpu->a + (uint16_t)operand + (uint16_t)cpu->p.c;
+
+  // fix up the flags
+  cpu->p.z = (t & 0xFF) == 0;
+  cpu->p.c = (t >> 8) != 0;
+  cpu->p.v = ((~((uint16_t)cpu->a ^ (uint16_t)operand) & ((uint16_t)cpu->a ^ (uint16_t)t)) & 0x0080) ? 1 : 0;
+  // negative flag
+  cpu->p.n = t & 0x80 ? 1 : 0;
+
+  cpu->a = t & 0xFF;
+
+}
+
+
 defop(AND) { NOT_IMPLEMENTED(AND); }
 defop(ASL) { NOT_IMPLEMENTED(ASL); }
 defop(BCC) { NOT_IMPLEMENTED(BCC); }
