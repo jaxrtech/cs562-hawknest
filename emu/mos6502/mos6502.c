@@ -142,6 +142,7 @@ static int decode(mos6502_t* cpu, int pc, enc_t* enc) {
     case MODE_REL:
       // Relative
       enc->arg8 = read8(cpu, pc + 1);
+      enc->abs_addr = enc->arg8 + pc + 2;
       return pc + 2;
 
     case MODE_ZEROP:
@@ -269,6 +270,13 @@ void op_transfer(struct mos6502 *cpu, const uint8_t *src, uint8_t *dest)
   CPU_SET_FLAG_NEGATIVE(cpu, val);
 }
 
+void op_branch_cond(struct mos6502 *cpu, const uint16_t addr, bool flag)
+{
+  if (flag) {
+    cpu->pc = addr;
+  }
+}
+
 // add with carry (not that you can without)
 defop(ADC) {
   uint8_t operand = read8(cpu, enc->abs_addr);
@@ -316,16 +324,41 @@ defop(ASL) {
   cpu->p.c = carry;
 }
 
-defop(BCC) { NOT_IMPLEMENTED(BCC); }
-defop(BCS) { NOT_IMPLEMENTED(BCS); }
-defop(BEQ) { NOT_IMPLEMENTED(BEQ); }
+defop(BCC) {
+  op_branch_cond(cpu, enc->abs_addr, !cpu->p.c);
+}
+
+defop(BCS) {
+  op_branch_cond(cpu, enc->abs_addr, cpu->p.c);
+}
+
+defop(BEQ) {
+  op_branch_cond(cpu, enc->abs_addr, cpu->p.v);
+}
+
 defop(BIT) { NOT_IMPLEMENTED(BIT); }
-defop(BMI) { NOT_IMPLEMENTED(BMI); }
-defop(BNE) { NOT_IMPLEMENTED(BNE); }
-defop(BPL) { NOT_IMPLEMENTED(BPL); }
+
+defop(BMI) {
+  op_branch_cond(cpu, enc->abs_addr, cpu->p.n);
+}
+
+defop(BNE) {
+  op_branch_cond(cpu, enc->abs_addr, !cpu->p.z);
+}
+
+defop(BPL) {
+  op_branch_cond(cpu, enc->abs_addr, !cpu->p.n);
+}
+
 defop(BRK) { NOT_IMPLEMENTED(BRK); }
-defop(BVC) { NOT_IMPLEMENTED(BVC); }
-defop(BVS) { NOT_IMPLEMENTED(BVS); }
+
+defop(BVC) {
+  op_branch_cond(cpu, enc->abs_addr, !cpu->p.v);
+}
+
+defop(BVS) {
+  op_branch_cond(cpu, enc->abs_addr, cpu->p.z);
+}
 
 defop(CLC) {
   cpu->p.c = false;
@@ -371,6 +404,7 @@ defop(DEY) {
 }
 
 defop(EOR) { NOT_IMPLEMENTED(EOR); }
+
 defop(INC) {
   const uint16_t addr = enc->abs_addr;
 
