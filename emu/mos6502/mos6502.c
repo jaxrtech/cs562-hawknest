@@ -261,6 +261,14 @@ mos6502_step_result_t mos6502_step(mos6502_t* cpu) {
 #define CPU_SET_FLAG_ZERO(_CPU_, _VAL_) (_CPU_)->p.z = (UINT8(_VAL_) == 0x00u)
 #define CPU_SET_FLAG_NEGATIVE(_CPU_, _VAL_) (_CPU_)->p.n = (UINT8(_VAL_) & 0x80u) ? 1 : 0
 
+void op_transfer(struct mos6502 *cpu, const uint8_t *src, uint8_t *dest)
+{
+  const uint8_t val = *src;
+  *dest = val;
+  CPU_SET_FLAG_ZERO(cpu, val);
+  CPU_SET_FLAG_NEGATIVE(cpu, val);
+}
+
 // add with carry (not that you can without)
 defop(ADC) {
   uint8_t operand = read8(cpu, enc->abs_addr);
@@ -318,10 +326,23 @@ defop(BPL) { NOT_IMPLEMENTED(BPL); }
 defop(BRK) { NOT_IMPLEMENTED(BRK); }
 defop(BVC) { NOT_IMPLEMENTED(BVC); }
 defop(BVS) { NOT_IMPLEMENTED(BVS); }
-defop(CLC) { NOT_IMPLEMENTED(CLC); }
-defop(CLD) { NOT_IMPLEMENTED(CLD); }
-defop(CLI) { NOT_IMPLEMENTED(CLI); }
-defop(CLV) { NOT_IMPLEMENTED(CLV); }
+
+defop(CLC) {
+  cpu->p.c = false;
+}
+
+defop(CLD) {
+  cpu->p.d = false;
+}
+
+defop(CLI) {
+  cpu->p.i = false;
+}
+
+defop(CLV) {
+  cpu->p.v = false;
+}
+
 defop(CMP) { NOT_IMPLEMENTED(CMP); }
 defop(CPX) { NOT_IMPLEMENTED(CPX); }
 defop(CPY) { NOT_IMPLEMENTED(CPY); }
@@ -387,6 +408,7 @@ defop(LDX) {
   cpu->p.z = cpu->x == 0x00;
   cpu->p.n = cpu->x & 0x80u ? 1 : 0;
 }
+
 defop(LDY) {
   cpu->y = read8(cpu, enc->abs_addr);
   cpu->p.z = cpu->y == 0x00;
@@ -394,8 +416,24 @@ defop(LDY) {
 }
 
 defop(LSR) { NOT_IMPLEMENTED(LSR); }
-defop(NOP) { NOT_IMPLEMENTED(NOP); }
-defop(ORA) { NOT_IMPLEMENTED(ORA); }
+
+defop(NOP) { }
+
+defop(ORA) {
+  uint8_t arg;
+  if (enc->mode == MODE_IMM) {
+    arg = enc->arg8;
+  } else {
+    arg = read8(cpu, enc->abs_addr);
+  }
+
+  uint8_t val = cpu->a;
+  val |= arg;
+
+  cpu->a = val;
+  CPU_SET_FLAG_ZERO(cpu, val);
+  CPU_SET_FLAG_NEGATIVE(cpu, val);
+}
 defop(PHA) { NOT_IMPLEMENTED(PHA); }
 defop(PHP) { NOT_IMPLEMENTED(PHP); }
 defop(PLA) { NOT_IMPLEMENTED(PLA); }
@@ -430,12 +468,29 @@ defop(STY) {
   write8(cpu, enc->abs_addr, cpu->y);
 }
 
-defop(TAX) { NOT_IMPLEMENTED(TAX); }
-defop(TAY) { NOT_IMPLEMENTED(TAY); }
-defop(TSX) { NOT_IMPLEMENTED(TSX); }
-defop(TXA) { NOT_IMPLEMENTED(TXA); }
-defop(TXS) { NOT_IMPLEMENTED(TXS); }
-defop(TYA) { NOT_IMPLEMENTED(TYA); }
+defop(TAX) {
+  op_transfer(cpu, &cpu->a, &cpu->x);
+}
+
+defop(TAY) {
+  op_transfer(cpu, &cpu->a, &cpu->y);
+}
+
+defop(TSX) {
+  op_transfer(cpu, &cpu->sp, &cpu->x);
+}
+
+defop(TXA) {
+  op_transfer(cpu, &cpu->x, &cpu->a);
+}
+
+defop(TXS) {
+  op_transfer(cpu, &cpu->x, &cpu->sp);
+}
+
+defop(TYA) {
+  op_transfer(cpu, &cpu->y, &cpu->a);
+}
 
 defop(VMCALL) {
   handle_vmcall(cpu, enc->arg8);
