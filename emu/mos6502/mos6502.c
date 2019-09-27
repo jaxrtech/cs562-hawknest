@@ -257,28 +257,56 @@ mos6502_step_result_t mos6502_step(mos6502_t* cpu) {
   }
 #define defop(name) void eval_##name(mos6502_t* cpu, enc_t* enc)
 
+#define UINT8(X) ((X) & 0xFFu)
+#define CPU_SET_FLAG_ZERO(_CPU_, _VAL_) (_CPU_)->p.z = (UINT8(_VAL_) == 0x00u)
+#define CPU_SET_FLAG_NEGATIVE(_CPU_, _VAL_) (_CPU_)->p.n = (UINT8(_VAL_) & 0x80u) ? 1 : 0
 
 // add with carry (not that you can without)
 defop(ADC) {
-
   uint8_t operand = read8(cpu, enc->abs_addr);
-
   uint16_t t = (uint16_t)cpu->a + (uint16_t)operand + (uint16_t)cpu->p.c;
+  cpu->a = t & 0xFFu;
 
   // fix up the flags
-  cpu->p.z = (t & 0xFF) == 0;
-  cpu->p.c = (t >> 8) != 0;
+  cpu->p.c = (t >> 8u) != 0;
   cpu->p.v = ((~((uint16_t)cpu->a ^ (uint16_t)operand) & ((uint16_t)cpu->a ^ (uint16_t)t)) & 0x0080) ? 1 : 0;
-  // negative flag
-  cpu->p.n = t & 0x80 ? 1 : 0;
-
-  cpu->a = t & 0xFF;
-
+  CPU_SET_FLAG_ZERO(cpu, t);
+  CPU_SET_FLAG_NEGATIVE(cpu, t);
 }
 
+defop(AND) {
+  const uint8_t a = cpu->a;
+  const uint8_t m = read8(cpu, enc->abs_addr);
+  const uint8_t val = a & m;
+  cpu->a = val;
 
-defop(AND) { NOT_IMPLEMENTED(AND); }
-defop(ASL) { NOT_IMPLEMENTED(ASL); }
+  CPU_SET_FLAG_ZERO(cpu, val);
+  CPU_SET_FLAG_NEGATIVE(cpu, val);
+}
+
+defop(ASL) {
+  uint8_t val;
+  bool carry = false;
+
+  if (enc->mode == MODE_ACC) {
+    val = cpu->a;
+  } else {
+    val = read8(cpu, enc->abs_addr);
+  }
+
+  carry = (val & 0x80u) != 0u;
+  val <<= 1u;
+
+  if (enc->mode == MODE_ACC) {
+    cpu->a = val;
+  } else {
+    write8(cpu, enc->abs_addr, val);
+  }
+
+  CPU_SET_FLAG_ZERO(cpu, val);
+  CPU_SET_FLAG_NEGATIVE(cpu, val);
+  cpu->p.c = carry;
+}
 defop(BCC) { NOT_IMPLEMENTED(BCC); }
 defop(BCS) { NOT_IMPLEMENTED(BCS); }
 defop(BEQ) { NOT_IMPLEMENTED(BEQ); }
@@ -296,31 +324,72 @@ defop(CLV) { NOT_IMPLEMENTED(CLV); }
 defop(CMP) { NOT_IMPLEMENTED(CMP); }
 defop(CPX) { NOT_IMPLEMENTED(CPX); }
 defop(CPY) { NOT_IMPLEMENTED(CPY); }
-defop(DEC) { NOT_IMPLEMENTED(DEC); }
-defop(DEX) { NOT_IMPLEMENTED(DEX); }
-defop(DEY) { NOT_IMPLEMENTED(DEY); }
+
+defop(DEC) {
+  const uint16_t addr = enc->abs_addr;
+
+  uint16_t val = read8(cpu, addr);
+  val--;
+  write8(cpu, addr, val);
+
+  CPU_SET_FLAG_ZERO(cpu, val);
+  CPU_SET_FLAG_NEGATIVE(cpu, val);
+}
+
+defop(DEX) {
+  cpu->x--;
+  CPU_SET_FLAG_ZERO(cpu, cpu->x);
+  CPU_SET_FLAG_NEGATIVE(cpu, cpu->x);
+}
+
+defop(DEY) {
+  cpu->y--;
+  CPU_SET_FLAG_ZERO(cpu, cpu->y);
+  CPU_SET_FLAG_NEGATIVE(cpu, cpu->y);
+}
+
 defop(EOR) { NOT_IMPLEMENTED(EOR); }
-defop(INC) { NOT_IMPLEMENTED(INC); }
-defop(INX) { NOT_IMPLEMENTED(INX); }
-defop(INY) { NOT_IMPLEMENTED(INY); }
+defop(INC) {
+  const uint16_t addr = enc->abs_addr;
+
+  uint16_t val = read8(cpu, addr);
+  val++;
+  write8(cpu, addr, val);
+
+  CPU_SET_FLAG_ZERO(cpu, val);
+  CPU_SET_FLAG_NEGATIVE(cpu, val);
+}
+
+defop(INX) {
+  cpu->x++;
+  CPU_SET_FLAG_ZERO(cpu, cpu->x);
+  CPU_SET_FLAG_NEGATIVE(cpu, cpu->x);
+}
+
+defop(INY) {
+  cpu->y++;
+  CPU_SET_FLAG_ZERO(cpu, cpu->y);
+  CPU_SET_FLAG_NEGATIVE(cpu, cpu->y);
+}
+
 defop(JMP) { NOT_IMPLEMENTED(JMP); }
 defop(JSR) { NOT_IMPLEMENTED(JSR); }
 
 defop(LDA) {
   cpu->a = read8(cpu, enc->abs_addr);
   cpu->p.z = cpu->a == 0x00;
-  cpu->p.n = cpu->a & 0x80 ? 1 : 0;
+  cpu->p.n = cpu->a & 0x80u ? 1 : 0;
 }
 
 defop(LDX) {
   cpu->x = read8(cpu, enc->abs_addr);
   cpu->p.z = cpu->x == 0x00;
-  cpu->p.n = cpu->x & 0x80 ? 1 : 0;
+  cpu->p.n = cpu->x & 0x80u ? 1 : 0;
 }
 defop(LDY) {
   cpu->y = read8(cpu, enc->abs_addr);
   cpu->p.z = cpu->y == 0x00;
-  cpu->p.n = cpu->y & 0x80 ? 1 : 0;
+  cpu->p.n = cpu->y & 0x80u ? 1 : 0;
 }
 defop(LSR) { NOT_IMPLEMENTED(LSR); }
 defop(NOP) { NOT_IMPLEMENTED(NOP); }
