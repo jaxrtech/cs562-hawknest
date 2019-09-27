@@ -307,6 +307,7 @@ defop(ASL) {
   CPU_SET_FLAG_NEGATIVE(cpu, val);
   cpu->p.c = carry;
 }
+
 defop(BCC) { NOT_IMPLEMENTED(BCC); }
 defop(BCS) { NOT_IMPLEMENTED(BCS); }
 defop(BEQ) { NOT_IMPLEMENTED(BEQ); }
@@ -391,6 +392,7 @@ defop(LDY) {
   cpu->p.z = cpu->y == 0x00;
   cpu->p.n = cpu->y & 0x80u ? 1 : 0;
 }
+
 defop(LSR) { NOT_IMPLEMENTED(LSR); }
 defop(NOP) { NOT_IMPLEMENTED(NOP); }
 defop(ORA) { NOT_IMPLEMENTED(ORA); }
@@ -403,10 +405,18 @@ defop(ROR) { NOT_IMPLEMENTED(ROR); }
 defop(RTI) { NOT_IMPLEMENTED(RTI); }
 defop(RTS) { NOT_IMPLEMENTED(RTS); }
 defop(SBC) { NOT_IMPLEMENTED(SBC); }
-defop(SEC) { NOT_IMPLEMENTED(SEC); }
-defop(SED) { NOT_IMPLEMENTED(SED); }
-defop(SEI) { NOT_IMPLEMENTED(SEI); }
 
+defop(SEC) {
+  cpu->p.c = true;
+}
+
+defop(SED) {
+  cpu->p.d = true;
+}
+
+defop(SEI) {
+  cpu->p.i = true;
+}
 
 defop(STA) {
   write8(cpu, enc->abs_addr, cpu->a);
@@ -419,6 +429,7 @@ defop(STX) {
 defop(STY) {
   write8(cpu, enc->abs_addr, cpu->y);
 }
+
 defop(TAX) { NOT_IMPLEMENTED(TAX); }
 defop(TAY) { NOT_IMPLEMENTED(TAY); }
 defop(TSX) { NOT_IMPLEMENTED(TSX); }
