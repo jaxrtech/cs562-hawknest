@@ -135,11 +135,11 @@ static int decode(mos6502_t* cpu, int pc, enc_t* enc) {
 
       // oof, a bug
       if (plo == 0xFF) {
-        fprintf(stderr, "BUG!\n");
+        // fprintf(stderr, "BUG!\n");
         enc->abs_addr = buggy_read16(cpu, ptr);
-        fprintf(stderr, "abs = %04x\n", enc->abs_addr);
+        // fprintf(stderr, "abs = %04x\n", enc->abs_addr);
       } else {
-        fprintf(stderr, "NO BUG!\n");
+        // fprintf(stderr, "NO BUG!\n");
         enc->abs_addr = read16(cpu, ptr);
       }
       return pc + 3;
@@ -164,7 +164,7 @@ static int decode(mos6502_t* cpu, int pc, enc_t* enc) {
       // Relative
       enc->arg8 = read8(cpu, pc + 1);
       enc->abs_addr = ((char)enc->arg8) + pc + 2;
-      fprintf(stderr, "%d\n", enc->arg8);
+      // fprintf(stderr, "%d\n", enc->arg8);
       return pc + 2;
 
 case MODE_ZEROP:
@@ -254,7 +254,73 @@ size_t mos6502_instr_repr(mos6502_t* cpu, uint16_t addr, char* buffer,
   return 0;
 }
 
+
+static void stk_push(mos6502_t* cpu, uint8_t value) {
+  write8(cpu, 0x0100 + cpu->sp--, value);
+}
+
+static uint8_t stk_pop(mos6502_t* cpu) {
+  return read8(cpu, 0x0100 + (++cpu->sp));
+}
+
+static int handle_irq(mos6502_t* cpu) {
+  cpu->intr_status &= ~INTR_IRQ;
+
+  // return if interrupts are disabled
+  if (cpu->p.i == 0) return 0;
+
+
+  // push the old PC
+  stk_push(cpu, (cpu->pc >> 8) & 0xFF);
+  stk_push(cpu, (cpu->pc) & 0xFF);
+
+  // push the status with some bits changed
+  cpu->p.i = 1;
+  cpu->p.u = 1;
+  cpu->p.b = 0;
+  stk_push(cpu, cpu->p.val);
+
+  // read new PC from fixed addr
+  cpu->pc = read16(cpu, 0xFFFE);
+
+  // and return the number of interrupts to do
+  return 7;
+}
+
+static int handle_nmi(mos6502_t* cpu) {
+  cpu->intr_status &= ~INTR_NMI;
+
+  // push the old PC
+  stk_push(cpu, (cpu->pc >> 8) & 0xFF);
+  stk_push(cpu, (cpu->pc) & 0xFF);
+
+  // push the status with some bits changed
+  cpu->p.i = 1;
+  cpu->p.u = 1;
+  cpu->p.b = 0;
+  stk_push(cpu, cpu->p.val);
+
+  // read new PC from fixed addr
+  cpu->pc = read16(cpu, 0xFFFA);
+
+  // and return the number of interrupts to do
+  return 8;
+}
+
 mos6502_step_result_t mos6502_step(mos6502_t* cpu) {
+
+
+
+  int addnl_cycles = 0;
+  if (cpu->intr_status & INTR_NMI) {
+    addnl_cycles += handle_nmi(cpu);
+  }
+
+  if (cpu->intr_status & INTR_IRQ) {
+    addnl_cycles += handle_irq(cpu);
+  }
+
+
   enc_t enc;
   int newpc = decode(cpu, cpu->pc, &enc);
   if (enc.valid != 1) {
@@ -265,23 +331,16 @@ mos6502_step_result_t mos6502_step(mos6502_t* cpu) {
 
   char buf[50];
 
+
   mos6502_instr_repr(cpu, cpu->pc, buf, 50);
-  fprintf(stderr, "%04x [%02x]: %s\n", cpu->pc, enc.opcode, buf);
+  // fprintf(stderr, "%02x %04x [%02x]: %s\n", cpu->intr_status, cpu->pc, enc.opcode, buf);
 
   // evaluate
   cpu->pc = newpc;
   widgets[enc.opcode].evaluator(cpu, &enc);
 
-  mos6502_advance_clk(cpu, instr_cycles[enc.opcode] + enc.more_clk);
+  mos6502_advance_clk(cpu, instr_cycles[enc.opcode] + enc.more_clk + addnl_cycles);
   return MOS6502_STEP_RESULT_SUCCESS;
-}
-
-void stk_push(mos6502_t* cpu, uint8_t value) {
-  write8(cpu, 0x0100 + cpu->sp--, value);
-}
-
-uint8_t stk_pop(mos6502_t* cpu) {
-  return read8(cpu, 0x0100 + (++cpu->sp));
 }
 
 #define NOT_IMPLEMENTED(name)                    \
@@ -500,7 +559,7 @@ defop(INY) {
 defop(JMP) {
   // simple enough
   cpu->pc = enc->abs_addr;
-  fprintf(stderr, "new addr = %04x\n", enc->abs_addr);
+  // fprintf(stderr, "new addr = %04x\n", enc->abs_addr);
 }
 
 defop(JSR) {
