@@ -30,6 +30,9 @@ typedef struct {
     uint16_t arg16;
   };
   uint16_t abs_addr;
+
+  // some instructions conditionally have more clock cycles
+  uint16_t more_clk;
 } enc_t;
 // TODO: determine what a widget function is
 //      -- nick
@@ -65,7 +68,7 @@ static inline uint16_t read16(mos6502_t* cpu, uint16_t addr) {
 
 static inline uint16_t buggy_read16(mos6502_t* cpu, uint16_t addr) {
   uint16_t first = addr;
-  uint16_t secnd = (addr & 0xFF00) | (uint16_t)((uint8_t)addr + 1);
+  uint16_t secnd = (addr & 0xFF00);  // | (uint16_t)((uint8_t)addr + 1);
 
   uint16_t lo = (uint16_t)read8(cpu, first);
   uint16_t hi = (uint16_t)read8(cpu, secnd);
@@ -75,6 +78,8 @@ static inline uint16_t buggy_read16(mos6502_t* cpu, uint16_t addr) {
 }
 
 static int decode(mos6502_t* cpu, int pc, enc_t* enc) {
+  // start out with more_clk as zero
+  enc->more_clk = 0;
   enc->valid = 1;
   enc->opcode = read8(cpu, cpu->pc);
   const widget_t* w = &widgets[enc->opcode];
@@ -111,7 +116,7 @@ static int decode(mos6502_t* cpu, int pc, enc_t* enc) {
     case MODE_IMM:
       // Immediate
       enc->arg8 = read8(cpu, pc + 1);
-      enc->abs_addr = pc+1;
+      enc->abs_addr = pc + 1;
       return pc + 2;
 
     case MODE_IMPL:
@@ -119,10 +124,26 @@ static int decode(mos6502_t* cpu, int pc, enc_t* enc) {
       return pc + 1;
 
     case MODE_IND:
-      // the address here is the one that is indirectly pointed to
-      enc->arg16 = read16(cpu, pc + 1);
-      enc->abs_addr = buggy_read16(cpu, enc->arg16);
+
+    {
+      uint16_t plo = read8(cpu, pc + 1);
+      uint16_t phi = read8(cpu, pc + 2);
+
+      uint16_t ptr = (phi << 8) | plo;
+
+      enc->arg16 = ptr;
+
+      // oof, a bug
+      if (plo == 0xFF) {
+        fprintf(stderr, "BUG!\n");
+        enc->abs_addr = buggy_read16(cpu, ptr);
+        fprintf(stderr, "abs = %04x\n", enc->abs_addr);
+      } else {
+        fprintf(stderr, "NO BUG!\n");
+        enc->abs_addr = read16(cpu, ptr);
+      }
       return pc + 3;
+    }
 
     case MODE_XIND:
       // the supplied 8-bit address is offset by X reg to index a location in
@@ -142,23 +163,27 @@ static int decode(mos6502_t* cpu, int pc, enc_t* enc) {
     case MODE_REL:
       // Relative
       enc->arg8 = read8(cpu, pc + 1);
-      enc->abs_addr = enc->arg8 + pc + 2;
+      enc->abs_addr = ((char)enc->arg8) + pc + 2;
+      fprintf(stderr, "%d\n", enc->arg8);
       return pc + 2;
 
-    case MODE_ZEROP:
+case MODE_ZEROP:
       // Zero-page operations let you read a single byte from the first page.
       enc->arg8 = read8(cpu, pc + 1);
       enc->abs_addr = enc->arg8 & 0xFF;  // some trickery
+      enc->abs_addr &= 0xFF;
       return pc + 2;
 
     case MODE_ZEROPX:
       enc->arg8 = read8(cpu, pc + 1);
       enc->abs_addr = (enc->arg8 & 0xFF) + cpu->x;  // some trickery
+      enc->abs_addr &= 0xFF;
       return pc + 2;
 
     case MODE_ZEROPY:
       enc->arg8 = read8(cpu, pc + 1);
       enc->abs_addr = (enc->arg8 & 0xFF) + cpu->y;  // some trickery
+      enc->abs_addr &= 0xFF;
       return pc + 2;
   }
 
@@ -196,7 +221,8 @@ size_t mos6502_instr_repr(mos6502_t* cpu, uint16_t addr, char* buffer,
       return snprintf(buffer, buflen, "%s  A", w->name);
 
     case MODE_IMM:
-      return snprintf(buffer, buflen, "%s  #$%02x", w->name, e.arg8);
+      return snprintf(buffer, buflen, "%s  #$%02x", w->name,
+                      read8(cpu, e.abs_addr));
 
     case MODE_IMPL:
       return snprintf(buffer, buflen, "%s", w->name);
@@ -212,7 +238,7 @@ size_t mos6502_instr_repr(mos6502_t* cpu, uint16_t addr, char* buffer,
       return snprintf(buffer, buflen, "%s  ($%04x),Y", w->name, e.arg16);
 
     case MODE_REL:
-      return snprintf(buffer, buflen, "%s  $%02x", w->name, e.arg8);
+      return snprintf(buffer, buflen, "%s  %d ; ($%04x)", w->name, e.arg8, e.abs_addr);
 
     case MODE_ZEROP:
       return snprintf(buffer, buflen, "%s  $%02x", w->name, e.arg8);
@@ -246,8 +272,16 @@ mos6502_step_result_t mos6502_step(mos6502_t* cpu) {
   cpu->pc = newpc;
   widgets[enc.opcode].evaluator(cpu, &enc);
 
-  mos6502_advance_clk(cpu, instr_cycles[enc.opcode]);
+  mos6502_advance_clk(cpu, instr_cycles[enc.opcode] + enc.more_clk);
   return MOS6502_STEP_RESULT_SUCCESS;
+}
+
+void stk_push(mos6502_t* cpu, uint8_t value) {
+  write8(cpu, 0x0100 + cpu->sp--, value);
+}
+
+uint8_t stk_pop(mos6502_t* cpu) {
+  return read8(cpu, 0x0100 + (++cpu->sp));
 }
 
 #define NOT_IMPLEMENTED(name)                    \
@@ -258,34 +292,43 @@ mos6502_step_result_t mos6502_step(mos6502_t* cpu) {
   }
 #define defop(name) void eval_##name(mos6502_t* cpu, enc_t* enc)
 
-#define UINT8(X) ((X) & 0xFFu)
+#define UINT8(X) ((X)&0xFFu)
 #define CPU_SET_FLAG_ZERO(_CPU_, _VAL_) (_CPU_)->p.z = (UINT8(_VAL_) == 0x00u)
-#define CPU_SET_FLAG_NEGATIVE(_CPU_, _VAL_) (_CPU_)->p.n = (UINT8(_VAL_) & 0x80u) ? 1 : 0
+#define CPU_SET_FLAG_NEGATIVE(_CPU_, _VAL_) \
+  (_CPU_)->p.n = ((UINT8(_VAL_) & 0x80u) ? 1 : 0)
 
-void op_transfer(struct mos6502 *cpu, const uint8_t *src, uint8_t *dest)
-{
+void op_transfer(struct mos6502* cpu, const uint8_t* src, uint8_t* dest) {
   const uint8_t val = *src;
   *dest = val;
   CPU_SET_FLAG_ZERO(cpu, val);
   CPU_SET_FLAG_NEGATIVE(cpu, val);
 }
 
-void op_branch_cond(struct mos6502 *cpu, const uint16_t addr, bool flag)
-{
+void op_branch_cond(struct mos6502* cpu, enc_t *enc, const uint16_t addr, bool flag) {
+
+  // branching can add additional cycles, which we need to handle!
   if (flag) {
+    enc->more_clk++;
+
+
+    // more cycles if branching over a page
+    if ((addr & 0xFF00) != (cpu->pc & 0xFF00)) {
+      enc->more_clk++;
+    }
     cpu->pc = addr;
   }
 }
 
 // add with carry (not that you can without)
 defop(ADC) {
-  uint8_t operand = read8(cpu, enc->abs_addr);
+  uint16_t operand = read8(cpu, enc->abs_addr);
   uint16_t t = (uint16_t)cpu->a + (uint16_t)operand + (uint16_t)cpu->p.c;
-  cpu->a = t & 0xFFu;
 
   // fix up the flags
-  cpu->p.c = (t >> 8u) != 0;
-  cpu->p.v = ((~((uint16_t)cpu->a ^ (uint16_t)operand) & ((uint16_t)cpu->a ^ (uint16_t)t)) & 0x0080) ? 1 : 0;
+  cpu->p.c = (t & 0xFF00) != 0;
+  cpu->p.v = ((cpu->a ^ t) & (operand ^ t) & 0x80) != 0;
+
+  cpu->a = t & 0x00FFu;
   CPU_SET_FLAG_ZERO(cpu, t);
   CPU_SET_FLAG_NEGATIVE(cpu, t);
 }
@@ -324,61 +367,81 @@ defop(ASL) {
   cpu->p.c = carry;
 }
 
-defop(BCC) {
-  op_branch_cond(cpu, enc->abs_addr, !cpu->p.c);
-}
+defop(BCC) { op_branch_cond(cpu, enc, enc->abs_addr, !cpu->p.c); }
 
-defop(BCS) {
-  op_branch_cond(cpu, enc->abs_addr, cpu->p.c);
-}
+defop(BCS) { op_branch_cond(cpu, enc, enc->abs_addr, cpu->p.c); }
 
 defop(BEQ) {
-  op_branch_cond(cpu, enc->abs_addr, cpu->p.v);
+  op_branch_cond(cpu, enc, enc->abs_addr, cpu->p.z);
 }
 
-defop(BIT) { NOT_IMPLEMENTED(BIT); }
-
-defop(BMI) {
-  op_branch_cond(cpu, enc->abs_addr, cpu->p.n);
+defop(BIT) {
+  uint16_t val = read8(cpu, enc->abs_addr);
+  uint16_t t = cpu->a & val;
+  cpu->p.z = (t & 0xFF) == 0;
+  cpu->p.n = (val & 0x80);
+  cpu->p.v = (val & (1 << 6));
 }
 
-defop(BNE) {
-  op_branch_cond(cpu, enc->abs_addr, !cpu->p.z);
+defop(BMI) { op_branch_cond(cpu, enc, enc->abs_addr, cpu->p.n); }
+
+defop(BNE) { op_branch_cond(cpu, enc, enc->abs_addr, !cpu->p.z); }
+
+defop(BPL) { op_branch_cond(cpu, enc, enc->abs_addr, !cpu->p.n); }
+
+
+defop(BRK) {
+  // set the flags up correctly
+  cpu->p.i = 1;
+  cpu->p.b = 1;
+
+  // set the PC to the one after the break
+  cpu->pc++;
+  // push the new PC
+  stk_push(cpu, (cpu->pc >> 8) & 0xFF);
+  stk_push(cpu, (cpu->pc) & 0xFF);
+
+  // push the old status
+  stk_push(cpu, cpu->p.val);
+  cpu->p.b = 0;
+  cpu->pc = read16(cpu, 0xFFFE);
 }
 
-defop(BPL) {
-  op_branch_cond(cpu, enc->abs_addr, !cpu->p.n);
+defop(BVC) { op_branch_cond(cpu, enc, enc->abs_addr, !cpu->p.v); }
+
+defop(BVS) { op_branch_cond(cpu, enc, enc->abs_addr, cpu->p.v); }
+
+defop(CLC) { cpu->p.c = false; }
+
+defop(CLD) { cpu->p.d = false; }
+
+defop(CLI) { cpu->p.i = false; }
+
+defop(CLV) { cpu->p.v = false; }
+
+defop(CMP) {
+  uint8_t M = read8(cpu, enc->abs_addr);
+
+  uint16_t tmp = (uint16_t)cpu->a - (uint16_t)M;
+
+  cpu->p.c = cpu->a >= M;
+  cpu->p.z = tmp == 0;
+  cpu->p.n = (tmp & 0x0080) != 0;
 }
-
-defop(BRK) { NOT_IMPLEMENTED(BRK); }
-
-defop(BVC) {
-  op_branch_cond(cpu, enc->abs_addr, !cpu->p.v);
+defop(CPX) {
+  uint8_t M = read8(cpu, enc->abs_addr);
+  uint16_t tmp = (uint16_t)cpu->x - (uint16_t)M;
+  cpu->p.c = cpu->x >= M;
+  cpu->p.z = tmp == 0;
+  cpu->p.n = (tmp & 0x0080) != 0;
 }
-
-defop(BVS) {
-  op_branch_cond(cpu, enc->abs_addr, cpu->p.z);
+defop(CPY) {
+  uint8_t M = read8(cpu, enc->abs_addr);
+  uint16_t tmp = (uint16_t)cpu->y - (uint16_t)M;
+  cpu->p.c = cpu->y >= M;
+  cpu->p.z = tmp == 0;
+  cpu->p.n = (tmp & 0x0080) != 0;
 }
-
-defop(CLC) {
-  cpu->p.c = false;
-}
-
-defop(CLD) {
-  cpu->p.d = false;
-}
-
-defop(CLI) {
-  cpu->p.i = false;
-}
-
-defop(CLV) {
-  cpu->p.v = false;
-}
-
-defop(CMP) { NOT_IMPLEMENTED(CMP); }
-defop(CPX) { NOT_IMPLEMENTED(CPX); }
-defop(CPY) { NOT_IMPLEMENTED(CPY); }
 
 defop(DEC) {
   const uint16_t addr = enc->abs_addr;
@@ -403,7 +466,13 @@ defop(DEY) {
   CPU_SET_FLAG_NEGATIVE(cpu, cpu->y);
 }
 
-defop(EOR) { NOT_IMPLEMENTED(EOR); }
+
+// exclusive or
+defop(EOR) {
+  cpu->a = cpu->a ^ read8(cpu, enc->abs_addr);
+  cpu->p.z = cpu->a == 0;
+  cpu->p.n = (cpu->a & 0x80) != 0;
+}
 
 defop(INC) {
   const uint16_t addr = enc->abs_addr;
@@ -428,13 +497,26 @@ defop(INY) {
   CPU_SET_FLAG_NEGATIVE(cpu, cpu->y);
 }
 
-defop(JMP) { NOT_IMPLEMENTED(JMP); }
-defop(JSR) { NOT_IMPLEMENTED(JSR); }
+defop(JMP) {
+  // simple enough
+  cpu->pc = enc->abs_addr;
+  fprintf(stderr, "new addr = %04x\n", enc->abs_addr);
+}
+
+defop(JSR) {
+  // this one is dumb, since it is actually relative to the old PC
+  cpu->pc--;
+  // push the upper half
+  stk_push(cpu, (cpu->pc >> 8) & 0x00FF);
+  // and the lower half
+  stk_push(cpu, (cpu->pc & 0xFF));
+  cpu->pc = enc->abs_addr;
+}
 
 defop(LDA) {
   cpu->a = read8(cpu, enc->abs_addr);
   cpu->p.z = cpu->a == 0x00;
-  cpu->p.n = cpu->a & 0x80u ? 1 : 0;
+  cpu->p.n = (cpu->a & 0x80u) != 0;
 }
 
 defop(LDX) {
@@ -449,9 +531,28 @@ defop(LDY) {
   cpu->p.n = cpu->y & 0x80u ? 1 : 0;
 }
 
-defop(LSR) { NOT_IMPLEMENTED(LSR); }
+defop(LSR) {
 
-defop(NOP) { }
+  uint16_t val;
+  if (enc->mode == MODE_ACC) {
+    val = cpu->a;
+  } else {
+    val = read8(cpu, enc->abs_addr);
+  }
+
+  cpu->p.c = (val & 1);
+  uint16_t temp = val >> 1;
+
+  cpu->p.z = (temp & 0x00FF) == 0;
+  cpu->p.n = (temp & 0x0080);
+  if (enc->mode == MODE_IMPL || enc->mode == MODE_ACC) {
+    cpu->a = temp & 0xFF;
+  } else {
+    write8(cpu, enc->abs_addr, temp & 0x00FF);
+  }
+}
+
+defop(NOP) {}
 
 defop(ORA) {
   uint8_t arg;
@@ -468,63 +569,135 @@ defop(ORA) {
   CPU_SET_FLAG_ZERO(cpu, val);
   CPU_SET_FLAG_NEGATIVE(cpu, val);
 }
-defop(PHA) { NOT_IMPLEMENTED(PHA); }
-defop(PHP) { NOT_IMPLEMENTED(PHP); }
-defop(PLA) { NOT_IMPLEMENTED(PLA); }
-defop(PLP) { NOT_IMPLEMENTED(PLP); }
-defop(ROL) { NOT_IMPLEMENTED(ROL); }
-defop(ROR) { NOT_IMPLEMENTED(ROR); }
-defop(RTI) { NOT_IMPLEMENTED(RTI); }
-defop(RTS) { NOT_IMPLEMENTED(RTS); }
-defop(SBC) { NOT_IMPLEMENTED(SBC); }
-
-defop(SEC) {
-  cpu->p.c = true;
+defop(PHA) {
+  // push acculmulator to stack
+  write8(cpu, 0x0100 + cpu->sp, cpu->a);
+  cpu->sp--;
 }
 
-defop(SED) {
-  cpu->p.d = true;
+defop(PHP) {
+  // push status register to stack
+  // push acculmulator to stack
+  write8(cpu, 0x0100 + cpu->sp, cpu->p.val);
+  cpu->p.b = 0;
+  cpu->p.z = 0;
+  cpu->sp--;
 }
 
-defop(SEI) {
-  cpu->p.i = true;
+defop(PLA) {
+  cpu->sp++;
+  cpu->a = read8(cpu, 0x0100 + cpu->sp);
+  cpu->p.z = cpu->a == 0;
+  cpu->p.n = cpu->a & 0x80;
 }
 
-defop(STA) {
-  write8(cpu, enc->abs_addr, cpu->a);
+defop(PLP) {
+  cpu->sp++;
+  cpu->p.val = read8(cpu, 0x0100 + cpu->sp);
+  cpu->p.u = 1;
+  cpu->p.b = 0;
 }
 
-defop(STX) {
-  write8(cpu, enc->abs_addr, cpu->x);
+defop(ROL) {
+  uint16_t val;
+  if (enc->mode == MODE_ACC) {
+    val = cpu->a;
+  } else {
+    val = read8(cpu, enc->abs_addr);
+  }
+  uint16_t temp = (uint16_t)(val << 1) | cpu->p.c;
+
+  cpu->p.c = (temp & 0xFF00) != 0;
+  cpu->p.z = (temp & 0x00FF) == 0;
+  cpu->p.n = (temp & 0x0080);
+  if (enc->mode == MODE_IMPL || enc->mode == MODE_ACC) {
+    cpu->a = temp & 0xFF;
+  } else {
+    write8(cpu, enc->abs_addr, temp & 0x00FF);
+  }
 }
 
-defop(STY) {
-  write8(cpu, enc->abs_addr, cpu->y);
+defop(ROR) {
+  uint16_t val;
+  if (enc->mode == MODE_ACC) {
+    val = cpu->a;
+  } else {
+    val = read8(cpu, enc->abs_addr);
+  }
+
+  uint16_t temp = ((uint16_t)cpu->p.c << 7) | (uint16_t)(val >> 1);
+
+  // handle before rotation
+  cpu->p.c = val & 1;
+  cpu->p.z = (temp & 0x00FF) == 0;
+  cpu->p.n = (temp & 0x0080);
+  if (enc->mode == MODE_IMPL || enc->mode == MODE_ACC) {
+    cpu->a = temp & 0xFF;
+  } else {
+    write8(cpu, enc->abs_addr, temp & 0x00FF);
+  }
 }
 
-defop(TAX) {
-  op_transfer(cpu, &cpu->a, &cpu->x);
+// return from interrupt
+//
+// pop the old status from the stack, and invert B and U
+// then pop the new PC from the stack
+defop(RTI) {
+  cpu->p.val = stk_pop(cpu);
+  cpu->p.b = 0;
+  cpu->p.u = 1;
+
+  cpu->pc = stk_pop(cpu) & 0xFF;
+  cpu->pc |= ((uint16_t)stk_pop(cpu) << 8);
 }
 
-defop(TAY) {
-  op_transfer(cpu, &cpu->a, &cpu->y);
+
+defop(RTS) {
+  cpu->pc = stk_pop(cpu);
+  cpu->pc |= stk_pop(cpu) << 8;
+  cpu->pc++;
 }
 
-defop(TSX) {
-  op_transfer(cpu, &cpu->sp, &cpu->x);
+// subract with carry
+// A = A - M - (1 - C)
+// Flags changed: C, V, N, Z
+defop(SBC) {
+  uint16_t fetched = read8(cpu, enc->abs_addr);
+
+  // printf("fetched = %04x\n", fetched);
+  uint16_t value = ((uint16_t)fetched) ^ 0x00FF;
+
+  uint16_t temp = (uint16_t)cpu->a + value + (uint16_t)cpu->p.c;
+  cpu->p.c = (temp & 0xFF00) != 0;
+  cpu->p.z = ((temp & 0x00FF) == 0);
+  cpu->p.v = (temp ^ (uint16_t)cpu->a) & (temp ^ value) & 0x0080;
+  cpu->p.n = (temp & 0x0080) != 0;
+  cpu->a = temp & 0x00FF;
 }
 
-defop(TXA) {
-  op_transfer(cpu, &cpu->x, &cpu->a);
-}
+defop(SEC) { cpu->p.c = true; }
 
-defop(TXS) {
-  op_transfer(cpu, &cpu->x, &cpu->sp);
-}
+defop(SED) { cpu->p.d = true; }
 
-defop(TYA) {
-  op_transfer(cpu, &cpu->y, &cpu->a);
-}
+defop(SEI) { cpu->p.i = true; }
+
+defop(STA) { write8(cpu, enc->abs_addr, cpu->a); }
+
+defop(STX) { write8(cpu, enc->abs_addr, cpu->x); }
+
+defop(STY) { write8(cpu, enc->abs_addr, cpu->y); }
+
+defop(TAX) { op_transfer(cpu, &cpu->a, &cpu->x); }
+
+defop(TAY) { op_transfer(cpu, &cpu->a, &cpu->y); }
+
+defop(TSX) { op_transfer(cpu, &cpu->sp, &cpu->x); }
+
+defop(TXA) { op_transfer(cpu, &cpu->x, &cpu->a); }
+
+defop(TXS) { op_transfer(cpu, &cpu->x, &cpu->sp); }
+
+defop(TYA) { op_transfer(cpu, &cpu->y, &cpu->a); }
 
 defop(VMCALL) {
   handle_vmcall(cpu, enc->arg8);
@@ -620,7 +793,7 @@ static const widget_t widgets[256] = {
     [0x66] = O(ROR, ZEROP),
     [0x76] = O(ROR, ZEROPX),
     [0x86] = O(STX, ZEROP),
-    [0x96] = O(STX, ZEROPX),
+    [0x96] = O(STX, ZEROPY),
     [0xA6] = O(LDX, ZEROP),
     [0xB6] = O(LDX, ZEROPX),
     [0xC6] = O(DEC, ZEROP),
